@@ -4,14 +4,14 @@ services:
     container_name: nassync
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3500:3500"
     volumes:
       - nassync_data:/data
       - /path/to/nas/folder:/nas/folder:ro
       - /path/to/external/hdd:/hdd
     environment:
       - PORT=3000
-      - TZ=Europe/London
+      - TZ=Europe/Bucharest
 
 volumes:
   nassync_data:
