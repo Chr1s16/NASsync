@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NAS Sync</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0d0f12;
+    --surface: #13161b;
+    --surface2: #1a1e25;
+    --surface3: #21262f;
+    --border: #2a2f3a;
+    --border2: #363d4a;
+    --accent: #00c896;
+    --accent2: #00a57a;
+    --accent-dim: rgba(0,200,150,0.1);
+    --warn: #f59e0b;
+    --warn-dim: rgba(245,158,11,0.1);
+    --error: #ef4444;
+    --error-dim: rgba(239,68,68,0.1);
+    --text: #e2e8f0;
+    --text2: #94a3b8;
+    --text3: #64748b;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Space Grotesk', sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid noise texture overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image: 
+      linear-gradient(rgba(0,200,150,0.015) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,200,150,0.015) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  #app { position: relative; z-index: 1; }
+
+  /* Header */
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .header-brand { display: flex; align-items: center; gap: 12px; }
+  .header-logo {
+    width: 36px; height: 36px;
+    background: var(--accent);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+  }
+  .header-title { font-size: 15px; font-weight: 600; letter-spacing: 0.5px; }
+  .header-sub { font-size: 11px; color: var(--text3); font-family: var(--mono); margin-top: 1px; }
+  .header-drives { display: flex; gap: 8px; align-items: center; }
+  .drive-pill {
+    font-family: var(--mono); font-size: 10px;
+    padding: 4px 10px; border-radius: 4px;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text2);
+  }
+  .drive-pill .mount { color: var(--accent); }
+
+  /* Layout */
+  .layout { display: grid; grid-template-columns: 320px 1fr; height: calc(100vh - 65px); }
+
+  /* Sidebar */
+  .sidebar {
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .sidebar-header {
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sidebar-title { font-size: 11px; font-weight: 600; color: var(--text3); letter-spacing: 1.5px; text-transform: uppercase; }
+  .btn-new {
+    background: var(--accent); color: #000;
+    border: none; border-radius: 5px;
+    padding: 5px 12px; font-size: 12px; font-weight: 600;
+    cursor: pointer; font-family: var(--sans);
+    transition: background 0.15s;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .btn-new:hover { background: var(--accent2); }
+
+  .job-list { flex: 1; overflow-y: auto; padding: 8px; }
+  .job-list::-webkit-scrollbar { width: 4px; }
+  .job-list::-webkit-scrollbar-track { background: transparent; }
+  .job-list::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+  .job-card {
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    margin-bottom: 6px;
+    transition: all 0.15s;
+    background: var(--surface2);
+  }
+  .job-card:hover { border-color: var(--border2); background: var(--surface3); }
+  .job-card.active { border-color: var(--accent); background: var(--accent-dim); }
+  .job-card-name { font-size: 13px; font-weight: 600; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .job-card-path { font-family: var(--mono); font-size: 10px; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .job-card-path span { color: var(--accent); margin: 0 4px; }
+  .job-card-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+  .job-status-badge {
+    font-size: 10px; font-family: var(--mono); padding: 2px 7px; border-radius: 3px;
+    font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .badge-idle { background: var(--surface3); color: var(--text3); border: 1px solid var(--border); }
+  .badge-running { background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent); animation: pulse 1.5s infinite; }
+  .badge-done { background: rgba(0,200,150,0.15); color: var(--accent); border: 1px solid rgba(0,200,150,0.3); }
+  .badge-error { background: var(--error-dim); color: var(--error); border: 1px solid var(--error); }
+  .badge-stopped { background: var(--warn-dim); color: var(--warn); border: 1px solid var(--warn); }
+  .badge-stopping { background: var(--warn-dim); color: var(--warn); border: 1px solid var(--warn); }
+
+  @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.6 } }
+
+  .job-card-last { font-size: 10px; color: var(--text3); font-family: var(--mono); }
+
+  /* Main */
+  .main { display: flex; flex-direction: column; overflow: hidden; }
+
+  .empty-state {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 12px; color: var(--text3);
+  }
+  .empty-icon { font-size: 48px; opacity: 0.3; }
+  .empty-state h2 { font-size: 16px; color: var(--text2); }
+  .empty-state p { font-size: 13px; }
+
+  /* Job detail */
+  .job-detail { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+  .detail-header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    display: flex; align-items: flex-start; justify-content: space-between;
+  }
+  .detail-name { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+  .detail-paths {
+    font-family: var(--mono); font-size: 11px; color: var(--text2);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .detail-paths .arrow { color: var(--accent); font-size: 14px; }
+  .path-chip {
+    background: var(--surface2); border: 1px solid var(--border);
+    padding: 3px 8px; border-radius: 4px;
+    max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  .detail-actions { display: flex; gap: 8px; align-items: center; }
+  .btn {
+    padding: 8px 16px; border-radius: 6px; border: none;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    font-family: var(--sans); transition: all 0.15s;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .btn-sync { background: var(--accent); color: #000; }
+  .btn-sync:hover { background: var(--accent2); }
+  .btn-sync:disabled { background: var(--surface3); color: var(--text3); cursor: not-allowed; }
+  .btn-stop { background: var(--warn-dim); color: var(--warn); border: 1px solid var(--warn); }
+  .btn-stop:hover { background: var(--warn); color: #000; }
+  .btn-edit { background: var(--surface2); color: var(--text2); border: 1px solid var(--border); }
+  .btn-edit:hover { border-color: var(--border2); color: var(--text); }
+  .btn-delete { background: var(--error-dim); color: var(--error); border: 1px solid var(--error); }
+  .btn-delete:hover { background: var(--error); color: #fff; }
+  .btn-eject { background: var(--surface2); color: var(--accent); border: 1px solid var(--accent); }
+  .btn-eject:hover { background: var(--accent-dim); }
+  .btn-eject:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Stats bar */
+  .stats-bar {
+    display: flex; gap: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .stat-item {
+    flex: 1; padding: 10px 18px;
+    border-right: 1px solid var(--border);
+  }
+  .stat-item:last-child { border-right: none; }
+  .stat-label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; font-weight: 600; margin-bottom: 3px; }
+  .stat-value { font-family: var(--mono); font-size: 14px; color: var(--accent); font-weight: 500; }
+
+  /* Progress bar */
+  .progress-wrap {
+    padding: 10px 24px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: none;
+  }
+  .progress-wrap.visible { display: block; }
+  .progress-track {
+    height: 4px; background: var(--surface3); border-radius: 2px; overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; background: var(--accent); border-radius: 2px;
+    transition: width 0.3s ease; width: 0%;
+  }
+  .progress-label { font-family: var(--mono); font-size: 10px; color: var(--text3); margin-top: 5px; }
+
+  /* Log terminal */
+  .log-wrap { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+  .log-toolbar {
+    padding: 8px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .log-toolbar-label { font-size: 11px; color: var(--text3); font-weight: 600; letter-spacing: 1px; text-transform: uppercase; }
+  .btn-clear { background: none; border: none; color: var(--text3); font-size: 11px; cursor: pointer; font-family: var(--mono); padding: 2px 6px; border-radius: 3px; }
+  .btn-clear:hover { background: var(--surface3); color: var(--text2); }
+
+  .log-terminal {
+    flex: 1; overflow-y: auto;
+    padding: 12px 16px;
+    font-family: var(--mono); font-size: 11.5px;
+    line-height: 1.7;
+    background: #080a0d;
+  }
+  .log-terminal::-webkit-scrollbar { width: 4px; }
+  .log-terminal::-webkit-scrollbar-track { background: transparent; }
+  .log-terminal::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .log-line { color: #7dd3a8; white-space: pre-wrap; word-break: break-all; }
+  .log-line.error { color: #f87171; }
+  .log-line.system { color: var(--text3); }
+  .log-line .ts { color: var(--text3); margin-right: 8px; user-select: none; }
+
+  /* Eject panel */
+  .eject-panel {
+    padding: 12px 24px;
+    background: var(--warn-dim);
+    border-top: 1px solid var(--warn);
+    display: none;
+    align-items: center; justify-content: space-between;
+  }
+  .eject-panel.visible { display: flex; }
+  .eject-msg { font-size: 13px; color: var(--warn); }
+  .eject-msg strong { display: block; font-size: 14px; margin-bottom: 2px; }
+  .eject-msg span { font-size: 12px; opacity: 0.8; }
+
+  /* Modal */
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: none; align-items: center; justify-content: center;
+    z-index: 100;
+    backdrop-filter: blur(4px);
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 12px;
+    padding: 28px;
+    width: 480px;
+    max-width: 95vw;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+  }
+  .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 20px; }
+
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 11px; color: var(--text3); font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .field input[type=text] {
+    width: 100%; padding: 9px 12px;
+    background: var(--surface2); border: 1px solid var(--border2);
+    color: var(--text); border-radius: 6px;
+    font-size: 13px; font-family: var(--mono);
+    outline: none; transition: border-color 0.15s;
+  }
+  .field input[type=text]:focus { border-color: var(--accent); }
+  .field input[type=text]::placeholder { color: var(--text3); }
+
+  .checkboxes { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+  .checkbox-item { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .checkbox-item input { accent-color: var(--accent); width: 14px; height: 14px; }
+  .checkbox-item span { font-size: 12px; font-family: var(--mono); color: var(--text2); }
+
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 24px; }
+  .btn-cancel { background: var(--surface2); color: var(--text2); border: 1px solid var(--border); }
+  .btn-cancel:hover { border-color: var(--border2); }
+  .btn-save { background: var(--accent); color: #000; }
+  .btn-save:hover { background: var(--accent2); }
+
+  .field-hint { font-size: 10px; color: var(--text3); margin-top: 4px; font-family: var(--mono); }
+
+  /* Toast */
+  #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 200; display: flex; flex-direction: column; gap: 8px; }
+  .toast {
+    padding: 10px 16px; border-radius: 8px;
+    font-size: 13px; font-weight: 500;
+    background: var(--surface2); border: 1px solid var(--border2);
+    color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    animation: slideIn 0.2s ease;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .toast.success { border-color: var(--accent); }
+  .toast.error { border-color: var(--error); }
+  .toast.warn { border-color: var(--warn); }
+  @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="header">
+    <div class="header-brand">
+      <div class="header-logo">⇄</div>
+      <div>
+        <div class="header-title">NAS Sync</div>
+        <div class="header-sub">docker · rsync · v1.0</div>
+      </div>
+    </div>
+    <div class="header-drives" id="drives-bar">
+      <span style="font-size:11px;color:var(--text3)">Loading drives…</span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <span class="sidebar-title">Sync Jobs</span>
+        <button class="btn-new" onclick="openModal()">＋ New Job</button>
+      </div>
+      <div class="job-list" id="job-list">
+        <div style="padding:20px;text-align:center;font-size:12px;color:var(--text3)">No jobs yet</div>
+      </div>
+    </aside>
+
+    <main class="main" id="main">
+      <div class="empty-state" id="empty-state">
+        <div class="empty-icon">⇄</div>
+        <h2>No job selected</h2>
+        <p>Select a sync job from the sidebar or create a new one</p>
+      </div>
+      <div class="job-detail" id="job-detail" style="display:none">
+        <div class="detail-header">
+          <div>
+            <div class="detail-name" id="detail-name"></div>
+            <div class="detail-paths">
+              <span class="path-chip" id="detail-src"></span>
+              <span class="arrow">→</span>
+              <span class="path-chip" id="detail-dst"></span>
+            </div>
+          </div>
+          <div class="detail-actions" id="detail-actions"></div>
+        </div>
+        <div class="stats-bar">
+          <div class="stat-item"><div class="stat-label">Files Transferred</div><div class="stat-value" id="stat-files">—</div></div>
+          <div class="stat-item"><div class="stat-label">Total Size</div><div class="stat-value" id="stat-size">—</div></div>
+          <div class="stat-item"><div class="stat-label">Speed</div><div class="stat-value" id="stat-speed">—</div></div>
+          <div class="stat-item"><div class="stat-label">Elapsed</div><div class="stat-value" id="stat-elapsed">—</div></div>
+          <div class="stat-item"><div class="stat-label">Status</div><div class="stat-value" id="stat-status">idle</div></div>
+        </div>
+        <div class="progress-wrap" id="progress-wrap">
+          <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+          <div class="progress-label" id="progress-label">0%</div>
+        </div>
+        <div class="log-wrap">
+          <div class="log-toolbar">
+            <span class="log-toolbar-label">▸ Live Output</span>
+            <button class="btn-clear" onclick="clearLogs()">clear</button>
+          </div>
+          <div class="log-terminal" id="log-terminal">
+            <div class="log-line system">— ready —</div>
+          </div>
+        </div>
+        <div class="eject-panel" id="eject-panel">
+          <div class="eject-msg">
+            <strong>✓ Sync complete — safe to eject</strong>
+            <span>All files transferred. You may safely unplug your external drive.</span>
+          </div>
+          <button class="btn btn-eject" onclick="syncEject()">⏏ Eject Drive</button>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Modal -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-title" id="modal-title">New Sync Job</div>
+    <div class="field">
+      <label>Job Name</label>
+      <input type="text" id="f-name" placeholder="e.g. Photos Backup">
+    </div>
+    <div class="field">
+      <label>Source Path (NAS folder)</label>
+      <input type="text" id="f-src" placeholder="/nas/photos">
+      <div class="field-hint">Must be a mounted path inside the container</div>
+    </div>
+    <div class="field">
+      <label>Destination Path (External HDD)</label>
+      <input type="text" id="f-dst" placeholder="/hdd/backup/photos">
+      <div class="field-hint">Must be a mounted path inside the container</div>
+    </div>
+    <div class="field">
+      <label>Options</label>
+      <div class="checkboxes">
+        <label class="checkbox-item"><input type="checkbox" id="opt-delete"><span>--delete (remove extra files on dest)</span></label>
+        <label class="checkbox-item"><input type="checkbox" id="opt-checksum"><span>--checksum (verify by content)</span></label>
+        <label class="checkbox-item"><input type="checkbox" id="opt-dry"><span>--dry-run (simulate only)</span></label>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-save" onclick="saveJob()">Save Job</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+let jobs = [];
+let selectedJobId = null;
+let editingJobId = null;
+let sseSource = null;
+
+const API = '';
+
+// --- Init ---
+async function init() {
+  await loadJobs();
+  loadDrives();
+  setInterval(loadDrives, 15000);
+  setInterval(loadJobs, 5000);
+}
+
+async function loadJobs() {
+  try {
+    const res = await fetch(`${API}/api/jobs`);
+    jobs = await res.json();
+    renderJobList();
+    if (selectedJobId) {
+      const j = jobs.find(j => j.id === selectedJobId);
+      if (j) updateDetailStatus(j);
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function loadDrives() {
+  try {
+    const res = await fetch(`${API}/api/drives`);
+    const drives = await res.json();
+    const bar = document.getElementById('drives-bar');
+    bar.innerHTML = drives.map(d =>
+      `<div class="drive-pill"><span class="mount">${d.mount}</span> ${d.avail} free / ${d.size} · ${d.pct}</div>`
+    ).join('');
+  } catch {}
+}
+
+// --- Render ---
+function renderJobList() {
+  const el = document.getElementById('job-list');
+  if (!jobs.length) {
+    el.innerHTML = '<div style="padding:20px;text-align:center;font-size:12px;color:var(--text3)">No jobs yet</div>';
+    return;
+  }
+  el.innerHTML = jobs.map(j => {
+    const status = j.status || 'idle';
+    const lastRun = j.lastRun ? new Date(j.lastRun).toLocaleDateString() : 'never';
+    return `<div class="job-card${selectedJobId===j.id?' active':''}" onclick="selectJob('${j.id}')">
+      <div class="job-card-name">${esc(j.name)}</div>
+      <div class="job-card-path">${esc(j.source)}<span>→</span>${esc(j.destination)}</div>
+      <div class="job-card-meta">
+        <span class="job-status-badge badge-${status}">${status}</span>
+        <span class="job-card-last">${lastRun}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function selectJob(id) {
+  selectedJobId = id;
+  const j = jobs.find(j => j.id === id);
+  if (!j) return;
+  renderJobList();
+  showDetail(j);
+  subscribeSSE(j.id);
+}
+
+function showDetail(j) {
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('job-detail').style.display = 'flex';
+  document.getElementById('detail-name').textContent = j.name;
+  document.getElementById('detail-src').textContent = j.source;
+  document.getElementById('detail-src').title = j.source;
+  document.getElementById('detail-dst').textContent = j.destination;
+  document.getElementById('detail-dst').title = j.destination;
+  clearLogs();
+  updateDetailStatus(j);
+}
+
+function updateDetailStatus(j) {
+  const status = j.status || 'idle';
+  const stats = j.stats || {};
+  const isRunning = status === 'running' || status === 'stopping';
+  const isDone = status === 'done';
+
+  document.getElementById('stat-status').textContent = status;
+  document.getElementById('stat-status').style.color = 
+    isRunning ? 'var(--accent)' : isDone ? 'var(--accent)' : status === 'error' ? 'var(--error)' : 'var(--text2)';
+  if (stats.filesTransferred !== undefined) document.getElementById('stat-files').textContent = stats.filesTransferred || '—';
+  if (stats.totalSize) document.getElementById('stat-size').textContent = stats.totalSize;
+  if (stats.speed) document.getElementById('stat-speed').textContent = stats.speed;
+  if (stats.elapsed) document.getElementById('stat-elapsed').textContent = stats.elapsed;
+
+  // Actions
+  const actions = document.getElementById('detail-actions');
+  actions.innerHTML = '';
+  if (isRunning) {
+    actions.innerHTML += `<button class="btn btn-stop" onclick="stopSync('${j.id}')">⏹ Stop</button>`;
+  } else {
+    actions.innerHTML += `<button class="btn btn-sync" onclick="startSync('${j.id}')">▶ Start Sync</button>`;
+  }
+  actions.innerHTML += `<button class="btn btn-edit" onclick="editJob('${j.id}')">✎ Edit</button>`;
+  actions.innerHTML += `<button class="btn btn-delete" onclick="deleteJob('${j.id}')">✕</button>`;
+
+  // Progress bar
+  const pw = document.getElementById('progress-wrap');
+  const pf = document.getElementById('progress-fill');
+  const pl = document.getElementById('progress-label');
+  if (isRunning && stats.progress) {
+    pw.classList.add('visible');
+    pf.style.width = stats.progress + '%';
+    pl.textContent = stats.progress + '%' + (stats.speed ? ` · ${stats.speed}` : '');
+  } else if (isDone) {
+    pw.classList.add('visible');
+    pf.style.width = '100%';
+    pl.textContent = 'Complete';
+  } else {
+    pw.classList.remove('visible');
+  }
+
+  // Eject panel
+  const ep = document.getElementById('eject-panel');
+  if (isDone && j.lastResult === 'done') {
+    ep.classList.add('visible');
+  } else {
+    ep.classList.remove('visible');
+  }
+}
+
+function subscribeSSE(jobId) {
+  if (sseSource) { sseSource.close(); sseSource = null; }
+  const es = new EventSource(`${API}/api/jobs/${jobId}/stream`);
+  sseSource = es;
+  es.onmessage = e => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'log') {
+      appendLog(data.line, data.error);
+      if (data.stats) updateStats(data.stats);
+    } else if (data.type === 'done') {
+      appendLog(`— sync ${data.status} —`, false, true);
+      updateStats(data.stats);
+      // Update job locally
+      const j = jobs.find(j => j.id === jobId);
+      if (j) { j.status = 'idle'; j.lastResult = data.status; j.stats = data.stats; }
+      renderJobList();
+      updateDetailStatus(jobs.find(j => j.id === jobId) || {id: jobId, status: 'idle', lastResult: data.status, stats: data.stats});
+      if (data.status === 'done') toast('Sync completed successfully ✓', 'success');
+      else if (data.status === 'stopped') toast('Sync stopped', 'warn');
+      else toast('Sync ended with errors', 'error');
+    } else if (data.type === 'status') {
+      updateStats(data.stats);
+    }
+  };
+}
+
+function updateStats(stats) {
+  if (!stats) return;
+  if (stats.filesTransferred !== undefined) document.getElementById('stat-files').textContent = stats.filesTransferred || '—';
+  if (stats.totalSize) document.getElementById('stat-size').textContent = stats.totalSize;
+  if (stats.speed) document.getElementById('stat-speed').textContent = stats.speed;
+  if (stats.elapsed) document.getElementById('stat-elapsed').textContent = stats.elapsed;
+  if (stats.progress !== undefined) {
+    document.getElementById('progress-wrap').classList.add('visible');
+    document.getElementById('progress-fill').style.width = stats.progress + '%';
+    document.getElementById('progress-label').textContent = stats.progress + '%' + (stats.speed ? ` · ${stats.speed}` : '');
+  }
+}
+
+// --- Log terminal ---
+const logTerminal = document.getElementById('log-terminal');
+function appendLog(text, isError, isSystem) {
+  const div = document.createElement('div');
+  div.className = 'log-line' + (isError ? ' error' : isSystem ? ' system' : '');
+  const ts = new Date().toLocaleTimeString('en', {hour12:false});
+  div.innerHTML = `<span class="ts">${ts}</span>${esc(text)}`;
+  logTerminal.appendChild(div);
+  // Auto-scroll
+  logTerminal.scrollTop = logTerminal.scrollHeight;
+  // Trim old lines
+  while (logTerminal.children.length > 500) logTerminal.removeChild(logTerminal.firstChild);
+}
+function clearLogs() {
+  logTerminal.innerHTML = '<div class="log-line system">— ready —</div>';
+}
+
+// --- Actions ---
+async function startSync(id) {
+  const j = jobs.find(j => j.id === id);
+  if (!j) return;
+  appendLog(`Starting sync: ${j.source} → ${j.destination}`, false, true);
+  if (j.options?.dryRun) appendLog('DRY RUN — no files will be changed', false, true);
+  try {
+    const res = await fetch(`${API}/api/jobs/${id}/start`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { toast(data.error || 'Failed to start', 'error'); return; }
+    j.status = 'running';
+    renderJobList();
+    updateDetailStatus(j);
+    document.getElementById('stat-status').textContent = 'running';
+    document.getElementById('eject-panel').classList.remove('visible');
+    subscribeSSE(id);
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+async function stopSync(id) {
+  try {
+    const res = await fetch(`${API}/api/jobs/${id}/stop`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { toast(data.error || 'Failed to stop', 'error'); return; }
+    appendLog('Stop signal sent…', false, true);
+    toast('Stop signal sent', 'warn');
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+async function syncEject() {
+  toast('Sync unmount is OS-level — use "eject" in your file manager or run: umount /dev/sdX', 'warn');
+}
+
+// --- CRUD ---
+function openModal(jobId) {
+  editingJobId = jobId || null;
+  const modal = document.getElementById('modal');
+  document.getElementById('modal-title').textContent = jobId ? 'Edit Sync Job' : 'New Sync Job';
+  if (jobId) {
+    const j = jobs.find(j => j.id === jobId);
+    document.getElementById('f-name').value = j.name;
+    document.getElementById('f-src').value = j.source;
+    document.getElementById('f-dst').value = j.destination;
+    document.getElementById('opt-delete').checked = j.options?.delete || false;
+    document.getElementById('opt-checksum').checked = j.options?.checksum || false;
+    document.getElementById('opt-dry').checked = j.options?.dryRun || false;
+  } else {
+    document.getElementById('f-name').value = '';
+    document.getElementById('f-src').value = '';
+    document.getElementById('f-dst').value = '';
+    document.getElementById('opt-delete').checked = false;
+    document.getElementById('opt-checksum').checked = false;
+    document.getElementById('opt-dry').checked = false;
+  }
+  modal.classList.add('open');
+  document.getElementById('f-name').focus();
+}
+
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+
+async function saveJob() {
+  const name = document.getElementById('f-name').value.trim();
+  const source = document.getElementById('f-src').value.trim();
+  const destination = document.getElementById('f-dst').value.trim();
+  if (!name || !source || !destination) { toast('All fields required', 'error'); return; }
+  const options = {
+    delete: document.getElementById('opt-delete').checked,
+    checksum: document.getElementById('opt-checksum').checked,
+    dryRun: document.getElementById('opt-dry').checked
+  };
+  try {
+    let res, data;
+    if (editingJobId) {
+      res = await fetch(`${API}/api/jobs/${editingJobId}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name,source,destination,options}) });
+    } else {
+      res = await fetch(`${API}/api/jobs`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name,source,destination,options}) });
+    }
+    data = await res.json();
+    if (!res.ok) { toast(data.error || 'Failed to save', 'error'); return; }
+    closeModal();
+    await loadJobs();
+    if (!editingJobId) selectJob(data.id);
+    toast(editingJobId ? 'Job updated' : 'Job created', 'success');
+  } catch(e) { toast('Network error', 'error'); }
+}
+
+function editJob(id) { openModal(id); }
+
+async function deleteJob(id) {
+  if (!confirm('Delete this sync job?')) return;
+  await fetch(`${API}/api/jobs/${id}`, { method: 'DELETE' });
+  if (selectedJobId === id) {
+    selectedJobId = null;
+    document.getElementById('empty-state').style.display = 'flex';
+    document.getElementById('job-detail').style.display = 'none';
+    if (sseSource) { sseSource.close(); sseSource = null; }
+  }
+  await loadJobs();
+  toast('Job deleted', 'warn');
+}
+
+// --- Toast ---
+function toast(msg, type='success') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  const icons = {success:'✓', error:'✕', warn:'⚠'};
+  el.textContent = (icons[type]||'') + ' ' + msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ESC to close modal
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+document.getElementById('modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal(); });
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+services:
+  nassync:
+    image: ghcr.io/YOUR_GITHUB_USERNAME/nassync:latest
+    container_name: nassync
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Job persistence — always keep this
+      - nassync_data:/data
+
+      # ── Source folders (your NAS) ──────────────────────────────────────
+      # Add as many as you need. Use :ro to make them read-only (recommended).
+      - /path/to/nas/folder:/nas/folder:ro
+
+      # ── Destination (your external HDD) ───────────────────────────────
+      # If your path has spaces, use the long-form syntax:
+      #
+      # - type: bind
+      #   source: /media/My Drive/Backup
+      #   target: /hdd/backup
+      #
+      - /path/to/external/hdd:/hdd
+
+    environment:
+      - PORT=3000
+      - TZ=Europe/London  # your timezone
+
+volumes:
+  nassync_data:
