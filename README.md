@@ -22,7 +22,7 @@ A lightweight, self-hosted Docker app with a web GUI for manually syncing folder
 
 **1. Download the compose file**
 ```bash
-curl -O https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/nassync/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/chr1s16/nassync/main/docker-compose.yml
 ```
 
 **2. Edit `docker-compose.yml`** — set your NAS source and HDD destination paths:
@@ -42,7 +42,7 @@ docker compose up -d
 
 **4. Open the GUI**
 ```
-http://<your-nas-ip>:3000
+http://<your-nas-ip>:3500
 ```
 
 ---
