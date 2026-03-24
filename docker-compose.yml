@@ -1,10 +1,10 @@
 services:
   nassync:
-    image: ghcr.io/YOUR_GITHUB_USERNAME/nassync:latest
+    image: ghcr.io/Chr1s16/nassync:latest
     container_name: nassync
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3500:3500"
     volumes:
       # Job persistence — always keep this
       - nassync_data:/data
@@ -23,8 +23,8 @@ services:
       - /path/to/external/hdd:/hdd
 
     environment:
-      - PORT=3000
-      - TZ=Europe/London  # your timezone
+      - PORT=3500
+      - TZ=Europe/Bucharest  # your timezone
 
 volumes:
   nassync_data:
