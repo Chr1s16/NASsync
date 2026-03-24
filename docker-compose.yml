@@ -1,7 +1,7 @@
 services:
   nassync:
     image: ghcr.io/Chr1s16/nassync:latest
-    container_name: nassync
+    container_name: NASsync
     restart: unless-stopped
     ports:
       - "3500:3500"
