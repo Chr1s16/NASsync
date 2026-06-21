@@ -3,6 +3,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
+const cron = require('node-cron');
 
 const app = express();
 app.use(cors());
@@ -46,8 +47,9 @@ app.get('/api/jobs', (req, res) => {
 });
 
 app.post('/api/jobs', (req, res) => {
-  const { name, source, destination, options } = req.body;
+  const { name, source, destination, options, schedule } = req.body;
   if (!name || !source || !destination) return res.status(400).json({ error: 'Missing fields' });
+  if (schedule && !cron.validate(schedule)) return res.status(400).json({ error: 'Invalid cron expression' });
   const jobs = loadJobs();
   const job = {
     id: Date.now().toString(),
@@ -55,12 +57,14 @@ app.post('/api/jobs', (req, res) => {
     source,
     destination,
     options: options || { delete: false, checksum: false, dryRun: false },
+    schedule: schedule || null,
     status: 'idle',
     lastRun: null,
     lastResult: null
   };
   jobs.push(job);
   saveJobs(jobs);
+  registerSchedule(job);
   res.json(job);
 });
 
@@ -68,12 +72,15 @@ app.put('/api/jobs/:id', (req, res) => {
   const jobs = loadJobs();
   const idx = jobs.findIndex(j => j.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  if (req.body.schedule && !cron.validate(req.body.schedule)) return res.status(400).json({ error: 'Invalid cron expression' });
   jobs[idx] = { ...jobs[idx], ...req.body, id: jobs[idx].id };
   saveJobs(jobs);
+  registerSchedule(jobs[idx]);
   res.json(jobs[idx]);
 });
 
 app.delete('/api/jobs/:id', (req, res) => {
+  unregisterSchedule(req.params.id);
   let jobs = loadJobs();
   jobs = jobs.filter(j => j.id !== req.params.id);
   saveJobs(jobs);
@@ -210,6 +217,108 @@ app.get('/api/drives', (req, res) => {
     }).filter(d => d.mount && d.mount !== 'tmpfs' && !d.mount.startsWith('/proc'));
     res.json(drives);
   });
+});
+
+// --- Schedule management ---
+const scheduledTasks = {};
+
+function runJobById(jobId) {
+  const jobs = loadJobs();
+  const job = jobs.find(j => j.id === jobId);
+  if (!job) return;
+  if (activeSyncs[jobId]?.status === 'running') {
+    console.log(`[scheduler] Job ${job.name} already running, skipping`);
+    return;
+  }
+  console.log(`[scheduler] Firing scheduled sync for: ${job.name}`);
+
+  if (!fs.existsSync(job.source) || !fs.existsSync(job.destination)) {
+    console.warn(`[scheduler] Paths not found for job ${job.name}, skipping`);
+    return;
+  }
+
+  const args = ['-rlth', '--progress', '--stats', '--no-perms', '--no-owner', '--no-group', '--omit-dir-times'];
+  if (job.options?.delete) args.push('--delete');
+  if (job.options?.checksum) args.push('--checksum');
+  if (job.options?.dryRun) args.push('--dry-run');
+  const src = job.source.endsWith('/') ? job.source : job.source + '/';
+  const dst = job.destination.endsWith('/') ? job.destination : job.destination + '/';
+  args.push(src, dst);
+
+  const syncState = {
+    status: 'running',
+    logs: [],
+    stats: { filesTransferred: 0, totalSize: '', speed: '', elapsed: '', progress: 0 },
+    startTime: Date.now()
+  };
+  activeSyncs[job.id] = syncState;
+
+  const proc = spawn('rsync', args);
+  syncState.process = proc;
+
+  proc.stdout.on('data', chunk => {
+    const lines = chunk.toString().split('\n').filter(l => l.trim());
+    lines.forEach(line => {
+      syncState.logs.push({ time: new Date().toISOString(), text: line });
+      if (syncState.logs.length > 2000) syncState.logs.shift();
+      const progressMatch = line.match(/(\d+)%/);
+      if (progressMatch) syncState.stats.progress = parseInt(progressMatch[1]);
+      const speedMatch = line.match(/([\d,]+\.\d+\s+\w+\/s)/);
+      if (speedMatch) syncState.stats.speed = speedMatch[1];
+      const filesMatch = line.match(/Number of files transferred:\s+(\d+)/);
+      if (filesMatch) syncState.stats.filesTransferred = parseInt(filesMatch[1]);
+      const sizeMatch = line.match(/Total transferred file size:\s+([\d,.\s\w]+)/);
+      if (sizeMatch) syncState.stats.totalSize = sizeMatch[1].trim();
+      broadcast(job.id, { type: 'log', line, stats: syncState.stats });
+    });
+  });
+
+  proc.stderr.on('data', chunk => {
+    const text = chunk.toString();
+    syncState.logs.push({ time: new Date().toISOString(), text: '[ERR] ' + text, error: true });
+    broadcast(job.id, { type: 'log', line: '[ERR] ' + text, error: true });
+  });
+
+  proc.on('close', code => {
+    syncState.status = code === 0 ? 'done' : code === null ? 'stopped' : 'error';
+    syncState.endTime = Date.now();
+    syncState.stats.elapsed = ((syncState.endTime - syncState.startTime) / 1000).toFixed(1) + 's';
+    const jobs2 = loadJobs();
+    const idx = jobs2.findIndex(j => j.id === job.id);
+    if (idx !== -1) {
+      jobs2[idx].status = 'idle';
+      jobs2[idx].lastRun = new Date().toISOString();
+      jobs2[idx].lastResult = syncState.status;
+      saveJobs(jobs2);
+    }
+    broadcast(job.id, { type: 'done', status: syncState.status, stats: syncState.stats });
+    setTimeout(() => { delete activeSyncs[job.id]; }, 30000);
+  });
+}
+
+function registerSchedule(job) {
+  unregisterSchedule(job.id);
+  if (!job.schedule || !cron.validate(job.schedule)) return;
+  console.log(`[scheduler] Registered "${job.name}" with cron: ${job.schedule}`);
+  scheduledTasks[job.id] = cron.schedule(job.schedule, () => runJobById(job.id), { timezone: 'UTC' });
+}
+
+function unregisterSchedule(jobId) {
+  if (scheduledTasks[jobId]) {
+    scheduledTasks[jobId].stop();
+    delete scheduledTasks[jobId];
+  }
+}
+
+// Bootstrap schedules on startup
+loadJobs().forEach(job => registerSchedule(job));
+
+// --- Schedule info API ---
+app.get('/api/jobs/:id/schedule', (req, res) => {
+  const jobs = loadJobs();
+  const job = jobs.find(j => j.id === req.params.id);
+  if (!job) return res.status(404).json({ error: 'Not found' });
+  res.json({ schedule: job.schedule || null, active: !!scheduledTasks[req.params.id] });
 });
 
 const PORT = process.env.PORT || 3000;
