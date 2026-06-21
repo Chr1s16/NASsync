@@ -425,6 +425,24 @@
         <label class="checkbox-item"><input type="checkbox" id="opt-dry"><span>--dry-run (simulate only)</span></label>
       </div>
     </div>
+    <div class="field">
+      <label>Schedule (cron — optional)</label>
+      <input type="text" id="f-schedule" placeholder="e.g. 0 2 * * * (daily at 02:00 UTC)">
+      <div class="field-hint">Leave blank to run manually only. Uses UTC. &nbsp;
+        <span style="color:var(--accent);cursor:pointer" onclick="document.getElementById('cron-help').style.display=document.getElementById('cron-help').style.display==='none'?'block':'none'">presets ▾</span>
+      </div>
+      <div id="cron-help" style="display:none;margin-top:8px;background:var(--surface3);border:1px solid var(--border);border-radius:6px;padding:10px;font-family:var(--mono);font-size:10px;color:var(--text2);line-height:2">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px">
+          <span style="cursor:pointer;color:var(--accent)" onclick="setSchedule('0 * * * *')">0 * * * *</span><span>Every hour</span>
+          <span style="cursor:pointer;color:var(--accent)" onclick="setSchedule('0 2 * * *')">0 2 * * *</span><span>Daily at 02:00</span>
+          <span style="cursor:pointer;color:var(--accent)" onclick="setSchedule('0 2 * * 0')">0 2 * * 0</span><span>Weekly (Sun 02:00)</span>
+          <span style="cursor:pointer;color:var(--accent)" onclick="setSchedule('0 2 1 * *')">0 2 1 * *</span><span>Monthly (1st 02:00)</span>
+          <span style="cursor:pointer;color:var(--accent)" onclick="setSchedule('*/30 * * * *')">*/30 * * * *</span><span>Every 30 min</span>
+          <span style="cursor:pointer;color:var(--accent)" onclick="setSchedule('')">(clear)</span><span>Manual only</span>
+        </div>
+        <div style="margin-top:8px;color:var(--text3)">Format: minute hour day month weekday</div>
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-cancel" onclick="closeModal()">Cancel</button>
       <button class="btn btn-save" onclick="saveJob()">Save Job</button>
@@ -483,11 +501,12 @@ function renderJobList() {
   el.innerHTML = jobs.map(j => {
     const status = j.status || 'idle';
     const lastRun = j.lastRun ? new Date(j.lastRun).toLocaleDateString() : 'never';
+    const schedBadge = j.schedule ? `<span class="job-status-badge" style="background:rgba(0,150,255,0.1);color:#60a5fa;border:1px solid #3b82f6;margin-left:4px" title="Scheduled: ${esc(j.schedule)}">⏱ ${esc(j.schedule)}</span>` : '';
     return `<div class="job-card${selectedJobId===j.id?' active':''}" onclick="selectJob('${j.id}')">
       <div class="job-card-name">${esc(j.name)}</div>
       <div class="job-card-path">${esc(j.source)}<span>→</span>${esc(j.destination)}</div>
       <div class="job-card-meta">
-        <span class="job-status-badge badge-${status}">${status}</span>
+        <span class="job-status-badge badge-${status}">${status}</span>${schedBadge}
         <span class="job-card-last">${lastRun}</span>
       </div>
     </div>`;
@@ -532,6 +551,9 @@ function updateDetailStatus(j) {
   // Actions
   const actions = document.getElementById('detail-actions');
   actions.innerHTML = '';
+  if (j.schedule) {
+    actions.innerHTML += `<span style="font-size:11px;color:#60a5fa;font-family:var(--mono);background:rgba(0,150,255,0.08);border:1px solid #3b82f6;border-radius:5px;padding:5px 10px" title="Next run scheduled automatically">⏱ ${esc(j.schedule)}</span>`;
+  }
   if (isRunning) {
     actions.innerHTML += `<button class="btn btn-stop" onclick="stopSync('${j.id}')">⏹ Stop</button>`;
   } else {
@@ -667,6 +689,7 @@ function openModal(jobId) {
     document.getElementById('opt-delete').checked = j.options?.delete || false;
     document.getElementById('opt-checksum').checked = j.options?.checksum || false;
     document.getElementById('opt-dry').checked = j.options?.dryRun || false;
+    document.getElementById('f-schedule').value = j.schedule || '';
   } else {
     document.getElementById('f-name').value = '';
     document.getElementById('f-src').value = '';
@@ -674,7 +697,9 @@ function openModal(jobId) {
     document.getElementById('opt-delete').checked = false;
     document.getElementById('opt-checksum').checked = false;
     document.getElementById('opt-dry').checked = false;
+    document.getElementById('f-schedule').value = '';
   }
+  document.getElementById('cron-help').style.display = 'none';
   modal.classList.add('open');
   document.getElementById('f-name').focus();
 }
@@ -691,12 +716,13 @@ async function saveJob() {
     checksum: document.getElementById('opt-checksum').checked,
     dryRun: document.getElementById('opt-dry').checked
   };
+  const schedule = document.getElementById('f-schedule').value.trim() || null;
   try {
     let res, data;
     if (editingJobId) {
-      res = await fetch(`${API}/api/jobs/${editingJobId}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name,source,destination,options}) });
+      res = await fetch(`${API}/api/jobs/${editingJobId}`, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name,source,destination,options,schedule}) });
     } else {
-      res = await fetch(`${API}/api/jobs`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name,source,destination,options}) });
+      res = await fetch(`${API}/api/jobs`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name,source,destination,options,schedule}) });
     }
     data = await res.json();
     if (!res.ok) { toast(data.error || 'Failed to save', 'error'); return; }
@@ -735,6 +761,11 @@ function toast(msg, type='success') {
 function esc(s) {
   if (!s) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function setSchedule(val) {
+  document.getElementById('f-schedule').value = val;
+  document.getElementById('cron-help').style.display = 'none';
 }
 
 // ESC to close modal
